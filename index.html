@@ -1,0 +1,411 @@
+<!--
+Protótipo de Software Web (HTML/CSS/JS) - Detector de Materiais Radioativos e Resíduos
+Descrição: protótipo visual e interativo para trabalho escolar. Integração com Arduino será simulada.
+Como usar:
+ 1) Salve este arquivo como `index.html` e abra no navegador.
+ 2) Login padrão por aparelho: user = "user" / password = "password". Cada dispositivo (aparelho) possui um Device ID.
+ 3) No dashboard: escolha um aparelho (Device ID) e clique em "Simular Verificação" para gerar leituras mockadas.
+
+Funcionalidades implementadas (mock):
+ - Tela de login com credenciais padrão (user/password).
+ - Registro de diferentes aparelhos (Device IDs) para demonstração.
+ - Dashboard com cards: Nível de Radiação (Bq/L), Contaminação (Índice), pH, Turbidez, Metais Pesados.
+ - Indicadores visuais (cores), histórico de leituras em mini-gráfico SVG, e log de verificações.
+ - Botão "Simular Verificação" que gera leituras aleatórias com base em thresholds e registra no log.
+ - Exportar CSV do log (para demonstrar coleta de dados).
+ - Área de informações com recomendações rápidas quando diversos parâmetros excedem limites.
+
+-->
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Protótipo Detector - Rádio/Contaminação</title>
+	<link rel="stylesheet" href="style.css">
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#60a5fa;--danger:#ef4444;--ok:#10b981}
+    *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;}
+    body{margin:0;background:linear-gradient(180deg,#071029 0%, #0b1220 60%);color:#e6eef8;min-height:100vh}
+    .app{max-width:1100px;margin:28px auto;padding:20px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:48px;height:48px;border-radius:8px;background:linear-gradient(135deg,#1e3a8a,#06b6d4);display:flex;align-items:center;justify-content:center;font-weight:700}
+    header{display:flex;justify-content:space-between;align-items:center}
+    h1{font-size:20px;margin:0}
+
+    /* Login */
+    .login-card{max-width:420px;margin:40px auto;padding:20px;background:rgba(255,255,255,0.03);border-radius:12px;box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    label{display:block;font-size:13px;color:var(--muted);margin:8px 0 6px}
+    input,select,button{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+    .muted{color:var(--muted);font-size:13px}
+    .row{display:flex;gap:12px}
+
+    /* Dashboard */
+    .grid{
+			display:grid;
+			gap:18px;
+			margin-top:18px
+		}
+    .card{background:rgba(255,255,255,0.02);padding:14px;border-radius:12px}
+    .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .metric{padding:12px;border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent)}
+    .metric h3{margin:0;font-size:12px;color:var(--muted)}
+    .metric .value{font-size:20px;font-weight:700;margin-top:6px}
+    .meter{height:10px;background:rgba(255,255,255,0.04);border-radius:8px;margin-top:8px;overflow:hidden}
+    .meter > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),#7c3aed)}
+    .status{font-weight:600;padding:6px;border-radius:8px;margin-top:10px;display:inline-block}
+
+    /* mini graph */
+    .mini-graph{height:48px}
+
+    /* controls */
+    .controls{display:flex;gap:8px;align-items:center}
+
+    /* log */
+    .log{max-height:280px;overflow:auto;font-size:13px}
+    table{width:100%;border-collapse:collapse}
+    td,th{padding:8px;border-bottom:1px dashed rgba(255,255,255,0.03)}
+
+    footer{text-align:center;color:var(--muted);margin-top:22px;font-size:13px}
+
+    /* small responsive */
+    @media (max-width:900px){.grid{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,1fr)}.brand h1{display:none}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <div class="logo">DR</div>
+        <div>
+          <h1>Detector - Protótipo</h1>
+          <div class="muted">Protocolo: verificação rápida de água/solo (mock)</div>
+        </div>
+      </div>
+      <div class="muted" id="user-display"></div>
+    </header>
+
+    <!-- LOGIN -->
+    <div id="login-screen" class="login-card">
+      <h2>Login do Aparelho</h2>
+      <p class="muted">Use o login padrão fornecido com o aparelho. Ex: <strong>user</strong> / <strong>password</strong></p>
+      <label>Device ID</label>
+      <select id="device-id">
+        <!-- populated by JS -->
+      </select>
+      <label>Usuário</label>
+      <input id="login-user" value="user" />
+      <label>Senha</label>
+      <input id="login-pass" type="password" value="password" />
+      <div style="height:12px"></div>
+      <button id="btn-login">Entrar e abrir dashboard</button>
+      <div style="height:12px"></div>
+      <div class="muted">Dica: você pode criar novos aparelhos no painel (após login) para demonstrar múltiplos dispositivos.</div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="dashboard" style="display:none">
+      <div class="grid">
+        <div>
+          <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <h2 id="dash-title">Dashboard</h2>
+                <div class="muted" id="dash-device">Dispositivo: -</div>
+              </div>
+              <div style="width:260px">
+                <div class="row">
+                  <select id="select-device"></select>
+                  <button id="btn-sim">Simular Verificação</button>
+                </div>
+              </div>
+            </div>
+            <div style="height:12px"></div>
+
+            <div class="cards">
+              <div class="metric">
+                <h3>Radiação (Bq/L)</h3>
+                <div class="value" id="val-rad">--</div>
+                <div class="meter"><i id="meter-rad"></i></div>
+                <div id="status-rad" class="status">--</div>
+                <svg class="mini-graph" id="graph-rad"></svg>
+              </div>
+
+              <div class="metric">
+                <h3>Contaminação (índice)</h3>
+                <div class="value" id="val-cont">--</div>
+                <div class="meter"><i id="meter-cont"></i></div>
+                <div id="status-cont" class="status">--</div>
+                <svg class="mini-graph" id="graph-cont"></svg>
+              </div>
+
+              <div class="metric">
+                <h3>pH</h3>
+                <div class="value" id="val-ph">--</div>
+                <div class="meter"><i id="meter-ph"></i></div>
+                <div id="status-ph" class="status">--</div>
+                <svg class="mini-graph" id="graph-ph"></svg>
+              </div>
+
+              <div class="metric">
+                <h3>Turbidez (NTU)</h3>
+                <div class="value" id="val-turb">--</div>
+                <div class="meter"><i id="meter-turb"></i></div>
+                <div id="status-turb" class="status">--</div>
+                <svg class="mini-graph" id="graph-turb"></svg>
+              </div>
+
+              <div class="metric">
+                <h3>Metais Pesados (alerta)</h3>
+                <div class="value" id="val-met">--</div>
+                <div class="meter"><i id="meter-met"></i></div>
+                <div id="status-met" class="status">--</div>
+                <svg class="mini-graph" id="graph-met"></svg>
+              </div>
+
+              <div class="metric">
+                <h3>Última Verificação</h3>
+                <div class="value" id="val-last">--</div>
+                <div class="muted" id="val-loc">Local: --</div>
+                <div style="height:8px"></div>
+                <div class="controls">
+                  <button id="btn-export">Exportar log (CSV)</button>
+                  <button id="btn-newdevice">Criar novo aparelho</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="card" style="margin-top:12px">
+            <h3>Recomendações Rápidas</h3>
+            <ul id="recommendations">
+              <li>Sem leituras: aguardar hardware</li>
+            </ul>
+          </div>
+
+        </div>
+
+        <aside>
+          <div class="card">
+            <h3>Log de Verificações</h3>
+            <div class="log">
+              <table>
+                <thead><tr><th>Hora</th><th>Device</th><th>Rad(Bq/L)</th><th>pH</th><th>Cont</th></tr></thead>
+                <tbody id="log-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:12px">
+            <h3>Simulação - Parâmetros</h3>
+            <div class="muted">Ajuste limites para o teste (apenas visual)</div>
+            <label>Limite Radiação (Bq/L)</label>
+            <input id="limit-rad" value="0.3" />
+            <label>Limite Contaminação (índice)</label>
+            <input id="limit-cont" value="50" />
+            <label>Limite Metais (índice)</label>
+            <input id="limit-met" value="0.8" />
+          </div>
+        </aside>
+      </div>
+
+      <footer>Protótipo criado para demonstração. Abra `index.html` localmente para testar.</footer>
+    </div>
+  </div>
+
+  <script>
+    // Mock device list and storage
+    const devicesKey = 'proto.devices';
+    const logKey = 'proto.logs';
+
+    const defaultDevices = [
+      {id:'DEV-001', name:'Aparelho - Barragem Norte', user:'user', pass:'password', location:'Rio Santo - km 12'},
+      {id:'DEV-002', name:'Aparelho - Ribeirão Leste', user:'user', pass:'password', location:'Ribeirão Leste - ponte'},
+      {id:'DEV-003', name:'Aparelho - Estação Sul', user:'user', pass:'password', location:'Estação Sul - lagoa'}
+    ];
+
+    function seed(){
+      if(!localStorage.getItem(devicesKey)){
+        localStorage.setItem(devicesKey, JSON.stringify(defaultDevices));
+      }
+      if(!localStorage.getItem(logKey)){
+        localStorage.setItem(logKey, JSON.stringify([]));
+      }
+    }
+    seed();
+
+    // helpers
+    function $(id){return document.getElementById(id)}
+
+    function populateDeviceSelects(){
+      const arr = JSON.parse(localStorage.getItem(devicesKey));
+      const sel = $('device-id'); const sel2 = $('select-device');
+      sel.innerHTML = ''; sel2.innerHTML = '';
+      for(const d of arr){
+        const o = document.createElement('option'); o.value=d.id; o.textContent = d.id + ' — ' + d.name; sel.appendChild(o);
+        const o2 = document.createElement('option'); o2.value=d.id; o2.textContent = d.id + ' — ' + d.name; sel2.appendChild(o2);
+      }
+    }
+    populateDeviceSelects();
+
+    // login
+    $('btn-login').addEventListener('click', ()=>{
+      const deviceId = $('device-id').value; const user = $('login-user').value; const pass = $('login-pass').value;
+      const devices = JSON.parse(localStorage.getItem(devicesKey));
+      const found = devices.find(x=>x.id===deviceId && x.user===user && x.pass===pass);
+      if(!found){alert('Credenciais inválidas para esse aparelho (use user/password para demo)'); return}
+      // show dashboard
+      $('login-screen').style.display='none'; $('dashboard').style.display='block';
+      $('user-display').textContent = found.name;
+      $('dash-device').textContent = `${found.id} — ${found.name}`;
+      $('select-device').value = found.id;
+      currentDevice=found.id;
+      renderLast(); renderLog();
+    });
+
+    // create new device
+    $('btn-newdevice').addEventListener('click', ()=>{
+      const devices = JSON.parse(localStorage.getItem(devicesKey));
+      const newId = 'DEV-' + String(Math.floor(Math.random()*900+100));
+      const name = prompt('Nome do aparelho (ex: Aparelho - Ponto X)', 'Aparelho - Novo Ponto');
+      if(!name) return;
+      const newDevice = {id:newId, name, user:'user', pass:'password', location:'Local desconhecido'};
+      devices.push(newDevice); localStorage.setItem(devicesKey, JSON.stringify(devices));
+      populateDeviceSelects(); alert('Criado aparelho: ' + newId + '\nCredenciais padrão: user / password');
+    });
+
+    // simulation
+    let currentDevice = null;
+    function randomBetween(min,max){return Math.round((Math.random()*(max-min)+min)*100)/100}
+
+    function simulateReading(deviceId){
+      // realistic-ish mock values
+      const rad = Math.round((Math.random()*1.2)*100)/100; // Bq/L
+      const cont = Math.round((Math.random()*120));
+      const ph = Math.round((Math.random()*3 + 5.5)*100)/100; // 5.5 - 8.5
+      const turb = Math.round((Math.random()*120)*100)/100;
+      const met = Math.round((Math.random()*1.5)*100)/100;
+      const ts = new Date().toLocaleString();
+      const devices = JSON.parse(localStorage.getItem(devicesKey));
+      const d = devices.find(x=>x.id===deviceId) || {location:'-'};
+      const entry = {time:ts, device:deviceId, rad, cont, ph, turb, met, loc:d.location};
+      const logs = JSON.parse(localStorage.getItem(logKey)); logs.unshift(entry); if(logs.length>200) logs.pop();
+      localStorage.setItem(logKey, JSON.stringify(logs));
+      return entry;
+    }
+
+    function renderLog(){
+      const logs = JSON.parse(localStorage.getItem(logKey));
+      const body = $('log-body'); body.innerHTML = '';
+      for(const l of logs.slice(0,40)){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${l.time}</td><td>${l.device}</td><td>${l.rad}</td><td>${l.ph}</td><td>${l.cont}</td>`;
+        body.appendChild(tr);
+      }
+    }
+
+    function renderLast(){
+      const logs = JSON.parse(localStorage.getItem(logKey));
+      if(!logs.length) return;
+      const last = logs[0];
+      $('val-last').textContent = last.time;
+      $('val-loc').textContent = 'Local: ' + (last.loc||'-');
+    }
+
+    function updateMetrics(entry){
+      // fill values
+      $('val-rad').textContent = entry.rad + ' Bq/L';
+      $('val-cont').textContent = entry.cont;
+      $('val-ph').textContent = entry.ph;
+      $('val-turb').textContent = entry.turb;
+      $('val-met').textContent = entry.met;
+      $('val-last').textContent = entry.time;
+      $('val-loc').textContent = 'Local: ' + (entry.loc||'-');
+
+      // meters (clamp visually)
+      $('meter-rad').style.width = Math.min(100, entry.rad*40) + '%';
+      $('meter-cont').style.width = Math.min(100, entry.cont/1.5) + '%';
+      $('meter-ph').style.width = (Math.abs(entry.ph-7)/3*100) + '%';
+      $('meter-turb').style.width = Math.min(100, entry.turb/1.2) + '%';
+      $('meter-met').style.width = Math.min(100, entry.met/1.5*100) + '%';
+
+      // statuses
+      const limRad = parseFloat($('limit-rad').value) || 0.3;
+      const limCont = parseFloat($('limit-cont').value) || 50;
+      const limMet = parseFloat($('limit-met').value) || 0.8;
+
+      setStatus('status-rad', entry.rad > limRad, `Limite ${limRad} Bq/L`);
+      setStatus('status-cont', entry.cont > limCont, `Limite ${limCont}`);
+      setStatus('status-ph', (entry.ph<6 || entry.ph>8), 'pH fora da faixa 6.0-8.0');
+      setStatus('status-turb', entry.turb>50, 'Turbidez alta');
+      setStatus('status-met', entry.met>limMet, `Limite metais ${limMet}`);
+
+      // recommendations
+      const rec = [];
+      if(entry.rad>limRad) rec.push('Radiação acima do limite — isolar área e recolher amostra para laboratório.');
+      if(entry.cont>limCont) rec.push('Índice de contaminação alto — priorizar remoção de sedimentos e investigação de origem.');
+      if(entry.met>limMet) rec.push('Presença de metais pesados — não consumir e sinalizar o ponto.');
+      if(entry.ph<6 || entry.ph>8) rec.push('pH fora da faixa ideal — verificar tratamentos de neutralização.');
+      if(entry.turb>100) rec.push('Turbidez extrema — alto conteúdo de sedimentos (possível rompimento recente).');
+      if(!rec.length) rec.push('Parâmetros dentro do esperado — monitoramento regular recomendado.');
+      const ul = $('recommendations'); ul.innerHTML=''; for(const r of rec){const li=document.createElement('li');li.textContent=r;ul.appendChild(li)}
+
+      // mini graphs push
+      pushToGraph('graph-rad', entry.rad, 0, 1.5);
+      pushToGraph('graph-cont', entry.cont, 0, 140);
+      pushToGraph('graph-ph', entry.ph, 4, 10);
+      pushToGraph('graph-turb', entry.turb, 0, 140);
+      pushToGraph('graph-met', entry.met, 0, 2);
+
+      renderLog();
+    }
+
+    function setStatus(id, bad, text){
+      const el = $(id); el.textContent = text; el.style.background = bad ? 'linear-gradient(90deg,var(--danger),#fb7185)' : 'linear-gradient(90deg,var(--ok),#34d399)'; el.style.color='#021018';
+    }
+
+    // simple mini-graph storage
+    const graphs = {};
+    function pushToGraph(svgId, value, min, max){
+      if(!graphs[svgId]) graphs[svgId]=[];
+      const arr = graphs[svgId]; arr.unshift({v:value,t: new Date().toLocaleTimeString()}); if(arr.length>20) arr.pop();
+      drawSpark(svgId, arr, min, max);
+    }
+
+    function drawSpark(svgId, arr, min, max){
+      const svg = $(svgId); while(svg.firstChild) svg.removeChild(svg.firstChild);
+      const w = svg.clientWidth || 200; const h = svg.clientHeight || 48; svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      if(arr.length==0) return;
+      const step = w/(arr.length-1 || 1);
+      let path=''; for(let i=0;i<arr.length;i++){const x=i*step; const v=arr[i].v; const y = h - ((v-min)/(max-min||1))*h; path += (i===0?`M ${x} ${y}`:` L ${x} ${y}`)}
+      const p = document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d',path); p.setAttribute('fill','none'); p.setAttribute('stroke','rgba(96,165,250,0.9)'); p.setAttribute('stroke-width','2'); svg.appendChild(p);
+    }
+
+    // simulate button
+    $('btn-sim').addEventListener('click', ()=>{
+      const deviceId = $('select-device').value; if(!deviceId){alert('Selecione um dispositivo');return}
+      const out = simulateReading(deviceId); updateMetrics(out);
+    });
+
+    // export CSV
+    $('btn-export').addEventListener('click', ()=>{
+      const logs = JSON.parse(localStorage.getItem(logKey)); if(!logs.length){alert('Sem dados para exportar');return}
+      let csv = 'time,device,rad,cont,ph,turb,met,loc\n';
+      for(const r of logs){csv += `${r.time.replace(/,/g,' ' )},${r.device},${r.rad},${r.cont},${r.ph},${r.turb},${r.met},${r.loc}\n`}
+      const blob = new Blob([csv],{type:'text/csv'}); const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'detector_logs.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    });
+
+    // initialize: default login select items prepopulated
+    window.addEventListener('load', ()=>{
+      populateDeviceSelects();
+      // pre-select first item
+      if($('device-id').options.length>0) $('device-id').selectedIndex=0;
+      if($('select-device').options.length>0) $('select-device').selectedIndex=0;
+      // take a sample reading on first load to populate graphs (optional)
+      // simulateReading($('select-device').value); renderLog();
+    });
+  </script>
+</body>
+</html>
